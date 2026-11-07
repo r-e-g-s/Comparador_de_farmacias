@@ -165,8 +165,8 @@ else:
                 diferencia=peor['Precio CLP']-mejor['Precio CLP']
                 col_barato,col_caro=st.columns(2)
                 with col_barato:
-                    st.metric('Farmacia con menor precio',mejor['Farmacia'],
-                              f'${mejor["Precio CLP"]:,}'.replace(',','.'), delta=None)
+                    st.metric('Farmacia con menor precio',value=mejor["Farmacia"],
+                              help=f'Precio: ${mejor["Precio CLP"]:,.0f}'.replace(",", ".")
                 with col_caro:
                     st.metric('Farmacia con mayor precio',peor['Farmacia'],
                               f'${peor["Precio CLP"]:,}'.replace(',','.'), delta=None)
