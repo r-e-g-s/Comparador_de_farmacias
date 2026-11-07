@@ -267,6 +267,9 @@ def buscar_cruzverde(texto, limite=72):
                             headers={'Accept': 'application/json',
                                      'Origin': 'https://www.cruzverde.cl',
                                      'Referer': 'https://www.cruzverde.cl/'})
+            print("URL Cruz Verde:", response.url)
+            print("Status Cruz Verde:", response.status_code)
+            print("Respuesta Cruz Verde:", response.text[:500])
             r.raise_for_status()
             data = r.json()
             if not isinstance(data, dict) or not isinstance(data.get('hits'), list):
