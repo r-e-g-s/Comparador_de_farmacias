@@ -93,6 +93,52 @@ def precio_knop_texto(soup):
     return precio_entero(precios[0])
 
 
+def consultar_cruzverde(url):
+    """Consulta OCAPI pública; no utiliza credenciales privadas ni sesiones."""
+    path = urlparse(url).path
+    match = re.search(r"/(\d+)\.html$", path)
+    if not match:
+        return {'precio': None, 'estado': 'No se encontró el código del producto'}
+    codigo = match.group(1)
+    endpoint = f'https://beta.cruzverde.cl/s/Chile/dw/shop/v19_1/products/{codigo}'
+    params = {
+        'client_id': 'c19ce24d-1677-4754-b9f7-c193997c5a92',
+        'expand': 'prices,promotions',
+    }
+    try:
+        r = requests.get(endpoint, params=params,
+                         headers={'Accept': 'application/json', 'User-Agent': HEADERS['User-Agent']},
+                         timeout=18)
+        if not r.ok:
+            return {'precio': None, 'estado': f'API Cruz Verde: HTTP {r.status_code}'}
+        data = r.json()
+        if str(data.get('id')) != codigo:
+            return {'precio': None, 'estado': 'El producto consultado no coincide con el enlace'}
+        precios = data.get('prices') or {}
+        candidatos = []
+        for campo, etiqueta in [('price', 'Precio de lista')]:
+            p = precio_entero(data.get(campo))
+            if p is not None:
+                candidatos.append((p, etiqueta, False))
+        p = precio_entero(precios.get('price-sale-cl'))
+        if p is not None:
+            candidatos.append((p, 'Precio de oferta API', False))
+        for promo in data.get('product_promotions') or []:
+            if not isinstance(promo, dict):
+                continue
+            p = precio_entero(promo.get('promotional_price'))
+            if p is not None:
+                nombre = str(promo.get('promotion_id') or 'promoción publicada')
+                candidatos.append((p, f'Promoción publicada: {nombre}', True))
+        if not candidatos:
+            return {'precio': None, 'estado': 'API sin precios verificables'}
+        p, origen, es_promo = min(candidatos, key=lambda x: x[0])
+        estado = origen + (' · Verificar condiciones de la promoción en tienda' if es_promo else '')
+        return {'precio': p, 'estado': estado}
+    except (requests.RequestException, ValueError, TypeError):
+        return {'precio': None, 'estado': 'No se pudo consultar la API de Cruz Verde'}
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def consultar(farmacia, url):
     """Consulta páginas públicas, sin credenciales ni eludir controles de acceso."""
@@ -111,6 +157,8 @@ def consultar(farmacia, url):
             return {'precio': None, 'estado': 'Enlace no válido'}
         if not any(u.hostname == h or u.hostname.endswith('.' + h) for h in hosts[farmacia]):
             return {'precio': None, 'estado': 'Dominio no esperado'}
+        if farmacia == 'Cruz Verde':
+            return consultar_cruzverde(url)
         response = requests.get(url, headers=HEADERS, timeout=18)
         if response.status_code != 200:
             return {'precio': None, 'estado': f'No se pudo consultar (HTTP {response.status_code})'}
@@ -173,7 +221,7 @@ else:
         validos=[x for x in datos if x['Precio CLP'] is not None]
         if validos:
             mejor=min(validos,key=lambda x:x['Precio CLP'])
-            st.success(f"Menor precio **verificado**: {mejor['Farmacia']} · ${mejor['Precio CLP']:,.0f}".replace(',','.'))
+            st.success(f"Menor precio **publicado**: {mejor['Farmacia']} · ${mejor['Precio CLP']:,.0f}".replace(',','.'))
             if len(validos)>1:
                 peor=max(validos,key=lambda x:x['Precio CLP'])
                 diferencia=peor['Precio CLP']-mejor['Precio CLP']
@@ -189,7 +237,7 @@ else:
                     value=f'${diferencia:,}'.replace(',', '.')
                 )
                 st.caption(f'Ahorro potencial: {diferencia/peor["Precio CLP"]:.1%} respecto del precio mayor, si las alternativas son comparables.')
-            else:st.caption('Solo una farmacia tiene precio verificado; no es posible afirmar cuál es la más barata entre todas.')
+            else:st.caption('Solo una farmacia tiene precio disponible; no es posible afirmar cuál es la más barata entre todas.')
         else:st.warning('No fue posible verificar precios automáticamente para este producto.')
         for x in sorted(datos,key=lambda x:(x['Precio CLP'] is None,x['Precio CLP'] or 0)):
             a,b,c=st.columns([2,2,3]);a.write('**'+x['Farmacia']+'**');b.write(f"${x['Precio CLP']:,}".replace(',','.') if x['Precio CLP'] is not None else 'Precio no verificado');c.link_button('Ver producto',x['URL']);st.caption(x['Estado'])
@@ -198,4 +246,4 @@ else:
         for farmacia,url in item['enlaces'].items():st.markdown(f'- [{farmacia}]({url})')
 
 st.divider()
-st.caption('Precios orientativos de páginas públicas. No se garantiza que las alternativas tengan igual dosis, formulación o cantidad. Los precios pueden variar por fecha, comuna y promociones.')
+st.caption('Precios orientativos obtenidos de páginas públicas y servicios públicos de producto. Las promociones pueden requerir condiciones especiales. Verifica precio final, presentación, disponibilidad y despacho en la farmacia antes de comprar.')
