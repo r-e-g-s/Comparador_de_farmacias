@@ -317,7 +317,8 @@ def buscar_cruzverde(texto, limite=72):
             return encontrados, estado
         return [], 'Sin resultados con precio para esta búsqueda'
     except (requests.RequestException, ValueError, TypeError, RuntimeError) as exc:
-        print('ERROR Cruz Verde:', type(exc).__name__, str(exc)[:300])
+        print(f"ERROR Cruz Verde: {type(exc).__name__}: {exc}", flush=True)
+        
         if encontrados:
-            return encontrados, f'Resultados parciales: {type(exc).__name__}'
-        return [], f'No se pudo consultar Cruz Verde ({type(exc).__name__})'
+            return encontrados, f'Resultados parciales: {type(exc).__name__}: {exc}'
+        return [], f'No se pudo consultar Cruz Verde: {exc}'
