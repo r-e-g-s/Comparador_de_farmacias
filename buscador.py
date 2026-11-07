@@ -270,7 +270,11 @@ def buscar_cruzverde(texto, limite=72):
             print("URL Cruz Verde:", response.url)
             print("Status Cruz Verde:", response.status_code)
             print("Respuesta Cruz Verde:", response.text[:500])
-            r.raise_for_status()
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Cruz Verde HTTP {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
             data = r.json()
             if not isinstance(data, dict) or not isinstance(data.get('hits'), list):
                 raise ValueError('Respuesta inesperada de Cruz Verde')
