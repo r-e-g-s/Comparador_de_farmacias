@@ -1,116 +1,31 @@
-"""Consultas públicas de catálogos. No elude bloqueos ni garantiza cobertura."""
-import json
-import re
-import unicodedata
-from difflib import SequenceMatcher
-from urllib.parse import quote, urljoin
-
-import requests
-from bs4 import BeautifulSoup
-
-FARMACIAS = {
-    'Knop': {'base': 'https://www.farmaciasknop.com', 'search': '/search?q={q}'},
-    'Cruz Verde': {'base': 'https://beta.cruzverde.cl', 'search': '/search?query={q}'},
-    'Salcobrand': {'base': 'https://salcobrand.cl', 'search': '/search?q={q}'},
-    'Ahumada': {'base': 'https://www.farmaciasahumada.cl', 'search': '/search?q={q}'},
-    'Dr. Simi': {'base': 'https://www.drsimi.cl', 'search': '/search?q={q}'},
-}
-HEADERS = {'User-Agent': 'Mozilla/5.0 (compatible; ComparadorPrecios/1.0)', 'Accept-Language': 'es-CL,es;q=0.9'}
-SESSION = requests.Session()
-SESSION.headers.update(HEADERS)
-
-
-def limpiar(s):
-    s = unicodedata.normalize('NFKD', str(s).lower())
-    s = ''.join(c for c in s if not unicodedata.combining(c))
-    return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9]+', ' ', s)).strip()
+            raise ValueError(f'Paginación inesperada: solicitada {pagina}')
+        if total_paginas is None:
+            total_paginas = int(data.get('total_pages', 0))
+            if not 1 <= total_paginas <= max_paginas:
+                raise ValueError(f'Cantidad de páginas fuera del límite: {total_paginas}')
+        for item in data['products']:
+            if not isinstance(item, dict) or item.get('blocked') or not item.get('available', False):
+                continue
+            vendor = item.get('vendor') or {}
+            marca = vendor.get('name', '') if isinstance(vendor, dict) else ''
+            x = producto(item.get('name'), item.get('price'), item.get('url'), 'Knop', marca)
+            if x and item.get('id') not in vistos:
+                x.update({'id': item.get('id'), 'imagen': item.get('image') or '',
+                          'precio_regular': precio_clp(item.get('regular_price')),
+                          'precio_dinamico': bool(item.get('has_dynamic_price'))})
+                vistos.add(item.get('id'))
+                todos.append(x)
+        if pagina >= total_paginas:
+            break
+    return todos
 
 
-def precio_clp(valor):
-    if isinstance(valor, (int, float)):
-        n = int(valor)
-        return n if 100 <= n <= 10000000 else None
-    if valor is None:
-        return None
-    s = str(valor).strip().replace('CLP', '').replace('$', '').replace(' ', '')
-    if not re.fullmatch(r'\d{1,3}(?:[.,]\d{3})+|\d{3,8}(?:[.,]00)?', s):
-        return None
-    if re.fullmatch(r'\d+[.,]00', s):
-        s = s[:-3]
-    n = int(re.sub(r'\D', '', s))
-    return n if 100 <= n <= 10000000 else None
-
-
-def producto(nombre, precio, url, farmacia, marca=''):
-    p = precio_clp(precio)
-    if not nombre or p is None or not url:
-        return None
-    base = FARMACIAS[farmacia]['base']
-    enlace = urljoin(base, url)
-    if not enlace.startswith(('https://', 'http://')) or not enlace.split('/')[2].endswith(base.split('/')[2]):
-        return None
-    return {'nombre': str(nombre).strip(), 'precio': p, 'url': enlace,
-            'farmacia': farmacia, 'marca': str(marca or '').strip()}
-
-
-def _jsonld(obj, farmacia, origen):
-    resultados = []
-    if isinstance(obj, list):
-        for x in obj:
-            resultados.extend(_jsonld(x, farmacia, origen))
-    elif isinstance(obj, dict):
-        tipo = obj.get('@type', '')
-        if isinstance(tipo, list):
-            tipo = ' '.join(tipo)
-        if 'Product' in str(tipo):
-            ofertas = obj.get('offers', {})
-            if isinstance(ofertas, list):
-                ofertas = next((o for o in ofertas if isinstance(o, dict) and o.get('price')), {})
-            if isinstance(ofertas, dict):
-                moneda = ofertas.get('priceCurrency', 'CLP')
-                if moneda == 'CLP':
-                    marca = obj.get('brand', '')
-                    if isinstance(marca, dict):
-                        marca = marca.get('name', '')
-                    x = producto(obj.get('name'), ofertas.get('price'), obj.get('url') or origen, farmacia, marca)
-                    if x:
-                        resultados.append(x)
-        for k in ('@graph', 'itemListElement', 'item'):
-            if k in obj:
-                resultados.extend(_jsonld(obj[k], farmacia, origen))
-    return resultados
-
-
-def _html_productos(html, farmacia, origen):
-    soup = BeautifulSoup(html, 'lxml')
-    encontrados = []
-    for script in soup.select('script[type="application/ld+json"]'):
-        try:
-            encontrados.extend(_jsonld(json.loads(script.string or script.get_text()), farmacia, origen))
-        except (ValueError, TypeError):
-            continue
-    # Extracción conservadora: precio y nombre deben estar en la misma tarjeta.
-    cards = soup.select('[data-product-id], [data-product], .product-card, .product-tile, .product-item, .product-grid-item')
-    for card in cards[:120]:
-        titulo = card.select_one('[itemprop="name"], .product-name, .product-title, .product-card__title, .product-tile__name, h3, h2')
-        enlace = card.select_one('a[href]')
-        precio = card.select_one('[itemprop="price"], .sale-price, .special-price, .price-sales, .product-price, .price')
-        if not (titulo and enlace and precio):
-            continue
-        valor = precio.get('content') or precio.get('data-price') or precio.get_text(' ', strip=True)
-        match = re.search(r'\$\s*([\d.,]+)', valor)
-        valor = match.group(1) if match else valor
-        x = producto(titulo.get_text(' ', strip=True), valor, enlace.get('href'), farmacia)
-        if x:
-            encontrados.append(x)
-    vistos = set()
-    unicos = []
-    for p in encontrados:
-        key = (limpiar(p['nombre']), p['precio'], p['url'])
-        if key not in vistos:
-            vistos.add(key)
-            unicos.append(p)
-    return unicos
+def filtrar_catalogo(productos, texto, limite=60):
+    tokens = limpiar(texto).split()
+    if not tokens:
+        return []
+    encontrados = [p for p in productos if all(t in limpiar(p['nombre'] + ' ' + p.get('marca', '')) for t in tokens)]
+    return sorted(encontrados, key=lambda p: puntaje(texto, p['nombre']), reverse=True)[:limite]
 
 
 def _knop_suggest(texto):
