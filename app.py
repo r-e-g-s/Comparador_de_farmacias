@@ -7,6 +7,14 @@ st.title('💊 Comparador de farmacias')
 st.caption('Knop como referencia · Cruz Verde como competidor (versión de prueba)')
 st.warning('Comparador informativo de precios. Las coincidencias sugeridas no acreditan bioequivalencia ni sustitución médica. Confirma producto, dosis, stock, precio final y condiciones en cada farmacia.')
 
+from buscador import buscar_cruzverde
+
+with st.expander("🔍 Diagnóstico Cruz Verde"):
+    if st.button("Probar conexión"):
+        productos, estado = buscar_cruzverde("magnesio")
+        st.write("Estado:", estado)
+        st.write("Productos encontrados:", len(productos))
+        
 @st.cache_data(ttl=900, show_spinner=False)
 def consulta(farmacia, texto):
     return buscar_cruzverde(texto) if farmacia == 'Cruz Verde' else buscar(farmacia, texto)
